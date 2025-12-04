@@ -1,17 +1,6 @@
 import * as THREE from 'three';
 import * as LocAR from 'locar';
-
-//Uvrier
-// Coordonnées des points fixes (calibration)
-const latPF1 = 46.24678;
-const lonPF1 = 7.41180;
-
-const latPF2 = 46.24666;
-const lonPF2 = 7.41182;
-
-// Coordonnées object
-const latObj = 46.24668;
-const lonObj = 7.41200;
+import { COORDS } from '../constants/CoordsPts.js'
 
 /*
 //IG Group
@@ -31,23 +20,23 @@ const lonObj = 7.36983;
 const contenuAR = {
   sphere: {
     type: 'sphere',
-    lon: lonObj,
-    lat: latObj
+    lon: COORDS.lonObj,
+    lat: COORDS.latObj
   },
   box: {
     type: 'box',
-    lon: lonObj,
-    lat: latObj
+    lon: COORDS.lonObj,
+    lat: COORDS.latObj
   },
   nav_pf1: {
       type: 'arrow',
-      lon: lonPF1,
-      lat: latPF1
+      lon: COORDS.lonPF1,
+      lat: COORDS.latPF1
   },
   nav_pf2: {
       type: 'arrow',
-      lon: lonPF2,
-      lat: latPF2
+      lon: COORDS.lonPF2,
+      lat: COORDS.latPF2
     },
 };
 

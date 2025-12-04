@@ -2,6 +2,11 @@
   <div class="calibration-root">
     <ARView ref="arView" />
 
+    <div v-if="isMeasuring" class="loading-overlay">
+      <div class="spinner"></div>
+      <p>Mesure en cours… ne bougez pas</p>
+    </div>
+
     <header class="calibration-header">
       <h1>Calibration</h1>
     </header>
@@ -35,13 +40,17 @@
 <script>
 import ARView from './ARView.vue'
 import DebugConsole from './DebugConsole.vue'
+import { runCalibrationPoint } from '../lib/calib.js'
+import { COORDS } from '../constants/CoordsPts.js'
 
 export default {
   name: 'Calibration',
   components: { ARView, DebugConsole },
 
   data() {
-    return { step: 1 }
+    return { step: 1,
+      isMeasuring: false
+     }
   },
 
   computed: {
@@ -60,11 +69,33 @@ export default {
   },
 
   methods: {
-    nextStep() {
-      if (this.step < 3) {
-        this.step++
-      } else {
-        this.$router.push('/')
+    async nextStep() {
+      const ar = this.$refs.arView?.arInstance;
+
+      if (this.step === 1) {
+        await runCalibrationPoint('Point 1', COORDS.lonPF1, COORDS.latPF1, {
+          onStart: () => { this.isMeasuring = true; },
+          onEnd:   () => { this.isMeasuring = false; },
+        });
+
+        ar?.showArrowPf2();   // affiche PF2
+
+        this.step = 2;
+        return;
+      }
+
+      if (this.step === 2) {
+        await runCalibrationPoint('Point 2', COORDS.lonPF2, COORDS.latPF2, {
+          onStart: () => { this.isMeasuring = true; },
+          onEnd:   () => { this.isMeasuring = false; },
+        });
+
+        this.step = 3;
+        return;
+      }
+
+      if (this.step === 3) {
+        this.$router.push('/');
       }
     }
   }
@@ -137,5 +168,31 @@ export default {
   font-size: 1rem;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  z-index: 9999;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 6px solid #ccc;
+  border-top-color: #4A6E8E;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

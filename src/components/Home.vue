@@ -23,6 +23,7 @@ import TopRightButtons from './TopRightButtons.vue'
 import Map from './Map.vue'
 import SidePanel from './SidePanel.vue'
 import Popup from './Popup.vue'
+import { startLiveCorrectedFakeGps, calibrationReady } from '../lib/calib.js';
 
 
 export default {
@@ -55,6 +56,16 @@ export default {
     if (!popupFlag) {
       this.showPopup = true
     }
+
+    this.$nextTick(async () => {
+      if (calibrationReady) {
+        try {
+          await startLiveCorrectedFakeGps();
+        } catch (e) {
+          console.error('Erreur lors du démarrage de la fake GPS :', e);
+        }
+      }
+    });
   },
   
   methods: {

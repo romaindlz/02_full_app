@@ -1,19 +1,16 @@
 import { appendLog, saveLogsToFile, clearLogs } from './logger.js';
 import { getPosition } from './getPosition.js';
 import { getHelmert2DParam, applyHelmert }  from './transformation.js';
+import { COORDS } from '../constants/CoordsPts.js'
 
 /* ────────────────── Calibration GPS ────────────────── */
 //Uvrier
 // Coordonnées des points fixes (calibration)
-const latPF1 = 46.24678;
-const lonPF1 = 7.41180;
+const latPF1 = COORDS.latPF1;
+const lonPF1 = COORDS.lonPF1;
 
-const latPF2 = 46.24666;
-const lonPF2 = 7.41182;
-
-// Coordonnées object
-const latObj = 46.24668;
-const lonObj = 7.41200;
+const latPF2 = COORDS.latPF2;
+const lonPF2 = COORDS.lonPF2;
 
 
 /*
@@ -87,91 +84,107 @@ function filterOutliers2D(points, zThreshold = 2.5) {
 /**
  * Calibre via getPosition() en bouclant pendant >= minDurationMs et >= minSamples.
  */
-async function calibrateGps(lonKnown, latKnown) {
+async function calibrateGps(lonKnown, latKnown, { onStart, onEnd } = {}) {
   const minDurationMs   = 5000;
   const minSamples      = 10;
   const sampleIntervalMs= 500;
   const zThreshold      = 2.5;
 
+  onStart?.(); //signal de début pour le spinner
+
   const start = Date.now();
   const samples = [];
 
-  // si tu as un service GPS interne
-  try { window?.locar?.stopGps?.(); } catch(e) {}
 
-  // Échantillonnage en boucle avec getPosition()
-  while ((Date.now() - start) < minDurationMs || samples.length < minSamples) {
-    try {
-      console.log(Date.now() - start)
-      const res = await getPosition();
+  try {
+    // si tu as un service GPS interne
+    try { window?.locar?.stopGps?.(); } catch(e) {}
 
-      const lat = res?.coords?.latitude;
-      const lon = res?.coords?.longitude;
-      const h = res?.coords?.altitude;
-      console.log('getPosition result:', lat, lon);
+    // Échantillonnage en boucle avec getPosition()
+    while ((Date.now() - start) < minDurationMs || samples.length < minSamples) {
+      try {
+        console.log(Date.now() - start)
+        const res = await getPosition();
 
-      if (res?.ok && lat != null && lon != null && h != null) {
-        samples.push({ lat: lat, lon: lon, h: h });
-        appendLog(`lat: ${lat}, lon: ${lon}, h: ${h}`);
+        const lat = res?.coords?.latitude;
+        const lon = res?.coords?.longitude;
+        const h = res?.coords?.altitude;
+        console.log('getPosition result:', lat, lon);
+
+        if (res?.ok && lat != null && lon != null && h != null) {
+          samples.push({ lat: lat, lon: lon, h: h });
+          //appendLog(`lat: ${lat}, lon: ${lon}, h: ${h}`);
+        }
+      } catch (e) {
+        // on ignore cet échantillon
       }
-    } catch (e) {
-      // on ignore cet échantillon
+      await sleep(sampleIntervalMs);
     }
-    await sleep(sampleIntervalMs);
+
+    if (!samples.length) {
+      throw new Error("Aucun échantillon reçu pendant la calibration.");
+    }
+
+    // Filtrage outliers 2D (z-score sur lat et lon)
+    const filtered = filterOutliers2D(samples, zThreshold);
+    const removed = samples.length - filtered.length;
+
+    const latMean = mean(filtered.map(p => p.lat));
+    const lonMean = mean(filtered.map(p => p.lon));
+    const altitudesInliers = filtered.map(p => p.h).filter(h => h != null);
+
+    const hMean = mean(altitudesInliers);
+    const hStd  = std(altitudesInliers);
+
+    //appendLog(`h mean (inliers): ${hMean} m, h std: ${hStd} m`);
+
+    // Correction = connu - mesuré
+    const dLatDeg = latKnown - latMean;
+    const dLonDeg = lonKnown - lonMean;
+
+    // Stats de dispersion (sur résidus post-correction)
+    const latResiduals = filtered.map(p => (latKnown - p.lat) - dLatDeg);
+    const lonResiduals = filtered.map(p => (lonKnown - p.lon) - dLonDeg);
+    const latStdDeg = std(latResiduals);
+    const lonStdDeg = std(lonResiduals);
+
+    //appendLog(`lat std: ${latStdDeg}, lon std: ${lonStdDeg}`);
+
+    // distance Haversine entre moyen mesuré et connu
+    const dHaversine = haversineDistance(latKnown, lonKnown, latMean, lonMean)
+
+    //appendLog(`delta [m] : ${dHaversine}`);
+    appendLog(`Calibration: ${samples.length} échantillons (−${removed} outliers, thr=${zThreshold})`);
+
+    return {
+      avgDeltaDeg: { dLat: dLatDeg, dLon: dLonDeg },
+      dHaversine,
+      avgAltitude: hMean,
+      stats: {
+        samplesTotal: samples.length,
+        samplesUsed: filtered.length,
+        zThreshold,
+        latMeasuredMean: latMean,
+        lonMeasuredMean: lonMean,
+        latResidualStdDeg: latStdDeg,
+        lonResidualStdDeg: lonStdDeg,
+        altitudesInliersCount: altitudesInliers.length,
+        altitudeMean: hMean,
+        altitudeStd: hStd,
+      },
+    };
+
+  } finally {
+    onEnd?.(); //signal de fin pour le spinner
   }
 
-  if (!samples.length) {
-    throw new Error("Aucun échantillon reçu pendant la calibration.");
-  }
+}
 
-  // Filtrage outliers 2D (z-score sur lat et lon)
-  const filtered = filterOutliers2D(samples, zThreshold);
-  const removed = samples.length - filtered.length;
 
-  const latMean = mean(filtered.map(p => p.lat));
-  const lonMean = mean(filtered.map(p => p.lon));
-  const altitudesInliers = filtered.map(p => p.h).filter(h => h != null);
+export let calibrationReady = false;
 
-  const hMean = mean(altitudesInliers);
-  const hStd  = std(altitudesInliers);
-
-  appendLog(`h mean (inliers): ${hMean} m, h std: ${hStd} m`);
-
-  // Correction = connu - mesuré
-  const dLatDeg = latKnown - latMean;
-  const dLonDeg = lonKnown - lonMean;
-
-  // Stats de dispersion (sur résidus post-correction)
-  const latResiduals = filtered.map(p => (latKnown - p.lat) - dLatDeg);
-  const lonResiduals = filtered.map(p => (lonKnown - p.lon) - dLonDeg);
-  const latStdDeg = std(latResiduals);
-  const lonStdDeg = std(lonResiduals);
-
-  appendLog(`lat std: ${latStdDeg}, lon std: ${lonStdDeg}`);
-
-  // distance Haversine entre moyen mesuré et connu
-  const dHaversine = haversineDistance(latKnown, lonKnown, latMean, lonMean)
-
-  appendLog(`delta [m] : ${dHaversine}`);
-  appendLog(`Calibration: ${samples.length} échantillons (−${removed} outliers, thr=${zThreshold})`);
-
-  return {
-    avgDeltaDeg: { dLat: dLatDeg, dLon: dLonDeg },
-    dHaversine,
-    avgAltitude: hMean,
-    stats: {
-      samplesTotal: samples.length,
-      samplesUsed: filtered.length,
-      zThreshold,
-      latMeasuredMean: latMean,
-      lonMeasuredMean: lonMean,
-      latResidualStdDeg: latStdDeg,
-      lonResidualStdDeg: lonStdDeg,
-      altitudesInliersCount: altitudesInliers.length,
-      altitudeMean: hMean,
-      altitudeStd: hStd,
-    },
-  };
+export function markCalibrationDone() {
+  calibrationReady = true;
 }
 
 
@@ -191,66 +204,60 @@ let calibLon = null;
 let params   = null;
 
 
-document.getElementById('Calib_pf1')?.addEventListener('click', async () => {
-  console.log('Calib pf1 clicked');
-  alert('Calibration sur le point 1 en cours… Placez-vous exactement sur le point connu et restez immobile ~5 s.');
-  try {
-    const res = await calibrateGps(lonPF1, latPF1);
+export async function runCalibrationPoint(pointName, lonKnown, latKnown, options={}) {
 
+  const { onStart, onEnd } = options;
+  
+  console.log(`Calibration ${pointName} démarrée`);
+  alert(`Calibration sur ${pointName} en cours… Restez immobile ~5 s.`);
+
+
+  try {
+    const res = await calibrateGps(lonKnown, latKnown, { onStart, onEnd });
+
+    // mise à jour des offsets globaux
     calibLat = res.avgDeltaDeg.dLat;
     calibLon = res.avgDeltaDeg.dLon;
 
-    pf1_source_lon = res.stats.lonMeasuredMean
-    pf1_source_lat = res.stats.latMeasuredMean
-    pf1_source_h = res.avgAltitude
+    // valeurs mesurées
+    if (pointName === 'Point 1') {
+      pf1_source_lon = res.stats.lonMeasuredMean;
+      pf1_source_lat = res.stats.latMeasuredMean;
+      pf1_source_h   = res.avgAltitude;
+    } else if (pointName === 'Point 2') {
+      pf2_source_lon = res.stats.lonMeasuredMean;
+      pf2_source_lat = res.stats.latMeasuredMean;
+      pf2_source_h   = res.avgAltitude;
+    }
 
     const meters = `≈ distance [m] ${res.dHaversine.toFixed(2)}`;
     const degs   = `Δlat ${calibLat.toFixed(8)}°, Δlon ${calibLon.toFixed(8)}°`;
     const spread = `σ: lat ${res.stats.latResidualStdDeg.toExponential(2)}°, lon ${res.stats.lonResidualStdDeg.toExponential(2)}°  | utilisés: ${res.stats.samplesUsed}/${res.stats.samplesTotal}`;
 
-    appendLog?.(`✅ Calibration sur le point 1 OK\n${degs}\n${meters}\n${spread}`);
-    alert(`Calibration sur le point 1 OK.\n${meters}`);
+    appendLog?.(`✅ Calibration sur ${pointName} OK\n${degs}\n${meters}\n${spread}`);
+    alert(`Calibration sur ${pointName} OK.\n${meters}`);
+
+    //Permet d'activer, ou non, le fakeGPS
+    if (pointName === 'Point 2') {
+      markCalibrationDone();
+    }
+
+    return res;
+
   } catch (e) {
-    appendLog?.(`❌ Calibration échouée: ${e?.message || e}`);
+    appendLog?.(`❌ Calibration ${pointName} échouée: ${e?.message || e}`);
     alert(`Calibration échouée: ${e?.message || e}`);
+    throw e;
   }
-});
+}
 
-
-document.getElementById('Calib_pf2')?.addEventListener('click', async () => {
-  console.log('Calib pf2 clicked');
-  alert('Calibration sur le point 2 en cours… Placez-vous exactement sur le point connu et restez immobile ~5 s.');
-  try {
-    const res = await calibrateGps(lonPF2, latPF2);
-
-    calibLat = res.avgDeltaDeg.dLat;
-    calibLon = res.avgDeltaDeg.dLon;
-
-    pf2_source_lon = res.stats.lonMeasuredMean
-    pf2_source_lat = res.stats.latMeasuredMean
-    pf2_source_h = res.avgAltitude
-
-    const meters = `≈ distance [m] ${res.dHaversine.toFixed(2)}`;
-    const degs   = `Δlat ${calibLat.toFixed(8)}°, Δlon ${calibLon.toFixed(8)}°`;
-    const spread = `σ: lat ${res.stats.latResidualStdDeg.toExponential(2)}°, lon ${res.stats.lonResidualStdDeg.toExponential(2)}°  | utilisés: ${res.stats.samplesUsed}/${res.stats.samplesTotal}`;
-
-    appendLog?.(`✅ Calibration sur le point 2 OK\n${degs}\n${meters}\n${spread}`);
-    alert(`Calibration sur le point 2 OK.\n${meters}`);
-  } catch (e) {
-    appendLog?.(`❌ Calibration échouée: ${e?.message || e}`);
-    alert(`Calibration échouée: ${e?.message || e}`);
-  }
-});
 
 const FAKE_GPS_INTERVAL = 1000; // en ms
 let fakeGpsLoopActive = false;
 let fakeGpsIntervalId = null;
 
-async function startLiveCorrectedFakeGps() {
+export async function startLiveCorrectedFakeGps() {
 
-  // ─────────────────────────────────────────────
-  // Vérif : les deux points calibrés ?
-  // ─────────────────────────────────────────────
   if (
     pf1_source_lon == null || pf1_source_lat == null ||
     pf2_source_lon == null || pf2_source_lat == null
@@ -260,9 +267,6 @@ async function startLiveCorrectedFakeGps() {
     return;
   }
 
-  // ─────────────────────────────────────────────
-  // Calcul des paramètres Helmert
-  // ─────────────────────────────────────────────
   let source1 = { lon: pf1_source_lon, lat: pf1_source_lat, h: pf1_source_h };
   let target1 = { lon: lonPF1,        lat: latPF1,        h: pf1_source_h };
 
@@ -328,40 +332,3 @@ async function startLiveCorrectedFakeGps() {
     }
   }, FAKE_GPS_INTERVAL);
 }
-
-async function stopFakeGpsLoop() {
-  // 1) Coupe TOUTES les boucles fake actives
-  try {
-    if (fakeGpsIntervalId) clearInterval(fakeGpsIntervalId);
-  } catch {}
-  fakeGpsIntervalId = null;
-  fakeGpsLoopActive = false;
-
-  try { window?.locar?.stopGps?.(); } catch {}
-  await sleep(100);
-  try {
-    await window?.locar?.startGps?.();
-    appendLog('🛑 Fake GPS stoppée. ✅ Retour au GPS du smartphone.');
-  } catch (e) {
-    appendLog(`❌ startGps a échoué: ${e?.message || e}`);
-  }
-}
-
-
-// Bouton START : démarre la simulation GPS continue
-document.getElementById("ApplyCalib")?.addEventListener("click", async () => {
-  try {
-    await startLiveCorrectedFakeGps();
-  } catch (e) {
-    appendLog(`❌ startLiveCorrectedFakeGps: ${e?.message || e}`);
-  }
-});
-
-// Bouton STOP : arrête la boucle
-document.getElementById("StopCalib")?.addEventListener("click", async () => {
-  try {
-    await stopFakeGpsLoop();
-  } catch (e) {
-    appendLog(`❌ stopFakeGpsLoop: ${e?.message || e}`);
-  }
-});
