@@ -4,6 +4,7 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   // Evite toute copie multiple de 'three' si un sous-module en tire aussi
   plugins: [vue()],
+  base: './',
   resolve: { dedupe: ['three'] },
   server: {
     open: true,

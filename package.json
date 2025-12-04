@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/core": "^7.4.4",
+    "@capacitor/device": "^7.0.2",
+    "@capacitor/geolocation": "^7.1.6",
     "leaflet": "^1.9.4",
     "locar": "^0.1.4",
     "three": "^0.175.0",
