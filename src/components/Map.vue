@@ -7,6 +7,7 @@
 <script>
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
+import { getPosition } from '../lib/getPosition.js';
 
 const lat  = 46.22543;
 const lon = 7.36980;
@@ -17,7 +18,9 @@ export default {
     return {
       center: [lat, lon],
       zoom: 17,
-      map: null
+      map: null,
+      userMarker: null,
+      watchIntervalId: null
     };
   },
   mounted() {
@@ -37,11 +40,56 @@ export default {
         attribution:
           "© swisstopo (pixelkarte-grau)"
       }).addTo(this.map)
+
+      this.userMarker = L.marker(this.center).addTo(this.map);
+
+      this.startUserTracking();
+
     } catch (e) {
       console.error('Erreur lors de l’init Leaflet :', e)
     }
-  }
-}
+  },
+
+  beforeUnmount() {
+    if (this.watchIntervalId) {
+      clearInterval(this.watchIntervalId);
+      this.watchIntervalId = null;
+    }
+  },
+
+  methods: {
+    async updateUserPosition() {
+      try {
+        const res = await getPosition();
+        if (!res?.ok || !res.coords) return;
+
+        const { latitude, longitude } = res.coords;
+        const newCenter = [latitude, longitude];
+
+        this.center = newCenter;
+        console.log(`Nouvelle position utilisateur : ${newCenter}`);
+
+        if (this.userMarker) {
+          this.userMarker.setLatLng(newCenter);
+        }
+
+        if (this.map) {
+          this.map.panTo(newCenter);
+        }
+      } catch (e) {
+        console.error('Erreur lors de la récupération de la position :', e);
+      }
+    },
+
+    startUserTracking() {
+      this.updateUserPosition();
+
+      this.watchIntervalId = setInterval(() => {
+        this.updateUserPosition();
+      }, 10000);
+    },
+  },
+};
 </script>
 
 <style scoped>
